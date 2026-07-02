@@ -9,18 +9,23 @@ export function authRouter(db: DB): Router {
 
   router.post("/register", validate(credentialsSchema), (req, res) => {
     const { email, password } = req.body as { email: string; password: string };
-    const existing = db
-      .prepare("SELECT id FROM users WHERE email = ?")
-      .get(email);
-    if (existing) {
-      return res.status(409).json({ error: "Email already registered." });
-    }
     const hash = bcrypt.hashSync(password, 10);
-    const info = db
-      .prepare("INSERT INTO users (email, password) VALUES (?, ?)")
-      .run(email, hash);
-    const userId = Number(info.lastInsertRowid);
-    return res.status(201).json({ token: signToken(userId), user: { id: userId, email } });
+    try {
+      const info = db
+        .prepare("INSERT INTO users (email, password) VALUES (?, ?)")
+        .run(email, hash);
+      const userId = Number(info.lastInsertRowid);
+      return res
+        .status(201)
+        .json({ token: signToken(userId), user: { id: userId, email } });
+    } catch (err) {
+      // Rely on the UNIQUE(email) constraint rather than a check-then-insert,
+      // which races under concurrent signups with the same email.
+      if (err instanceof Error && /UNIQUE/.test(err.message)) {
+        return res.status(409).json({ error: "Email already registered." });
+      }
+      throw err;
+    }
   });
 
   router.post("/login", validate(credentialsSchema), (req, res) => {
